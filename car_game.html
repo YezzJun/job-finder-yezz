@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>초정밀 칼박 주차: 1초 파킹</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=DungGeunMo&display=swap');
+        
+        * {
+            font-family: 'DungGeunMo', monospace, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        .pixel-border {
+            border: 4px solid #ffffff;
+            box-shadow: 4px 4px 0px #000000;
+        }
+
+        .pixel-btn {
+            background-color: #f59e0b;
+            color: #000;
+            border: 3px solid #ffffff;
+            box-shadow: 3px 3px 0px #000000;
+            transition: all 0.05s ease-in-out;
+        }
+        .pixel-btn:active {
+            transform: translate(2px, 2px);
+            box-shadow: 1px 1px 0px #000000;
+        }
+
+        /* Prevent text wrapping issues on small screens */
+        .whitespace-nowrap {
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen bg-slate-950 p-2 text-white overflow-hidden">
+
+    <!-- Game Container -->
+    <div class="w-full max-w-xl bg-gray-900 pixel-border p-3 flex flex-col items-center relative shadow-2xl my-auto">
+        
+        <!-- Header / Stats -->
+        <div class="w-full flex justify-between items-center mb-2 bg-gray-800 p-2.5 pixel-border text-sm sm:text-base">
+            <div>남은 시간: <span id="time-display" class="text-yellow-400 font-bold">60.0s</span></div>
+            <div>시도: <span id="attempt-display" class="text-green-400 font-bold">0 / 5</span></div>
+        </div>
+
+        <!-- Canvas Game View Area -->
+        <div class="relative w-full aspect-[2.2/1] bg-gray-800 overflow-hidden pixel-border my-1" id="canvas-container">
+            <canvas id="gameCanvas" class="w-full h-full block"></canvas>
+            
+            <!-- Overlay Title Screen (Difficulty Selector) -->
+            <div id="start-screen" class="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-3 text-center z-20">
+                <h1 class="text-2xl sm:text-3xl font-bold text-yellow-400 mb-1">🚗 1초 파킹</h1>
+                <p class="text-xs sm:text-sm text-gray-300 mb-3 leading-tight">
+                    달려오는 차를 정지 선 후관 <br><span class="text-cyan-300 font-bold">[STOP 박스]</span> 안에 딱 세우세요!
+                </p>
+                <div class="flex flex-col gap-2 w-full max-w-sm relative z-30 pointer-events-auto">
+                    <p class="text-xs text-yellow-300 font-bold mb-0.5">난이도를 선택해 시작하세요!</p>
+                    <button onclick="selectDifficulty('EASY')" type="button" class="pixel-btn w-full px-3 py-2 font-bold text-xs sm:text-sm whitespace-nowrap rounded cursor-pointer hover:bg-yellow-300 relative z-30">
+                        🟢 초보 운전자 (저속 / 짧은 미끌림)
+                    </button>
+                    <button onclick="selectDifficulty('NORMAL')" type="button" class="pixel-btn w-full px-3 py-2 font-bold text-xs sm:text-sm whitespace-nowrap rounded cursor-pointer hover:bg-yellow-300 relative z-30">
+                        🟡 칼박 중수 (표준 / 미끄럼 주의)
+                    </button>
+                    <button onclick="selectDifficulty('HARD')" type="button" class="pixel-btn w-full px-3 py-2 font-bold text-xs sm:text-sm whitespace-nowrap rounded cursor-pointer hover:bg-yellow-300 relative z-30">
+                        🔴 갓주차 신 (초고속 / 쭈욱 미끄러짐)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Overlay Result Screen (Optimized Layout to fit without scroll) -->
+        <div id="result-screen" class="absolute inset-0 bg-black/90 hidden flex-col items-center justify-center p-3 z-40">
+            <div class="flex flex-col items-center w-full max-w-sm justify-between max-h-full py-2 space-y-2">
+                <h2 class="text-xl font-bold text-yellow-400 shrink-0">🎉 주차 완료!</h2>
+                <p id="difficulty-badge" class="text-xs text-cyan-300 font-bold shrink-0"></p>
+                
+                <div class="w-full bg-gray-800 p-2 pixel-border text-xs overflow-y-auto max-h-36">
+                    <div id="attempts-history" class="space-y-1"></div>
+                    <hr class="border-gray-600 my-1">
+                    <div class="flex justify-between font-bold text-xs pt-0.5">
+                        <span>총 오차 합계:</span>
+                        <span id="final-score" class="text-green-400">0 cm</span>
+                    </div>
+                </div>
+
+                <button id="restart-btn" onclick="resetToMenu()" type="button" class="pixel-btn px-4 py-2 font-bold text-xs w-full hover:bg-yellow-300 cursor-pointer pointer-events-auto relative z-50 shrink-0">
+                    다시 도전하기
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mobile Brake Control Button -->
+        <button id="brake-btn" type="button" class="w-full mt-2 bg-red-600 hover:bg-red-500 text-white font-bold py-3 px-4 rounded pixel-border flex items-center justify-center gap-2 active:bg-red-700 text-sm sm:text-base shrink-0 relative z-10">
+            <span class="inline-block w-3.5 h-3.5 rounded-full bg-white animate-pulse"></span>
+            BRAKE ! (Space)
+        </button>
+
+    </div>
+
+    <!-- Audio Effects (Tone.js) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script>
+        // Virtual Canvas Dimensions for pixel art rendering
+        const V_WIDTH = 320;
+        const V_HEIGHT = 160;
+
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('canvas-container');
+
+        // Difficulty Configuration Settings
+        const DIFFICULTY_SETTINGS = {
+            EASY: { name: "초보 운전자", speed: 2.2, friction: 0.75 },
+            NORMAL: { name: "칼박 중수", speed: 3.6, friction: 0.82 },
+            HARD: { name: "갓주차 신", speed: 5.2, friction: 0.89 }
+        };
+
+        let currentDifficulty = 'NORMAL';
+
+        // Game State Variables
+        let gameState = 'START'; // START, RUNNING, STOPPED, END
+        let timeLeft = 60.0;
+        let attempts = 0;
+        let maxAttempts = 5;
+        let attemptErrors = [];
+        let timerId = null;
+        let animationFrameId = null;
+
+        // Feedback Animation State
+        let feedbackText = "";
+        let feedbackColor = "#ffffff";
+        let feedbackTimer = 0;
+
+        // Car & Parking Box Dimensions Setup
+        const stopLineX = 180; // STOP line start
+        const parkBoxWidth = 60; // 1.5x Car width (40 * 1.5)
+        const parkBoxHeight = 22;
+
+        let car = {
+            x: -60,
+            y: 95,
+            width: 40,
+            height: 20,
+            speed: 0,
+            maxSpeed: 3.6,
+            friction: 0.82,
+            isBraking: false,
+            skidMarks: []
+        };
+
+        // Resize Canvas helper
+        function resizeCanvas() {
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Sound Effects with Tone.js
+        function playScreechSound() {
+            try {
+                const noise = new Tone.Noise("white").start();
+                const filter = new Tone.Filter(800, "bandpass").toDestination();
+                noise.connect(filter);
+                noise.stop("+0.2");
+            } catch(e){}
+        }
+
+        function playSuccessSound() {
+            try {
+                const synth = new Tone.Synth().toDestination();
+                synth.triggerAttackRelease("C5", "8n");
+            } catch(e){}
+        }
+
+        // Difficulty Selector Entry point
+        function selectDifficulty(level) {
+            currentDifficulty = level;
+            const config = DIFFICULTY_SETTINGS[level];
+            car.maxSpeed = config.speed;
+            car.friction = config.friction;
+            startGame();
+        }
+
+        // Start / Reset Game Session
+        function startGame() {
+            document.getElementById('start-screen').classList.add('hidden');
+            document.getElementById('result-screen').classList.add('hidden');
+            document.getElementById('result-screen').classList.remove('flex');
+
+            timeLeft = 60.0;
+            attempts = 0;
+            attemptErrors = [];
+            gameState = 'RUNNING';
+
+            updateUI();
+            
+            clearInterval(timerId);
+            timerId = setInterval(() => {
+                if (gameState === 'RUNNING' || gameState === 'STOPPED') {
+                    timeLeft -= 0.1;
+                    if (timeLeft <= 0) {
+                        timeLeft = 0;
+                        endGame();
+                    }
+                    document.getElementById('time-display').innerText = timeLeft.toFixed(1) + 's';
+                }
+            }, 100);
+
+            resetCarForNextAttempt();
+            if(!animationFrameId) {
+                gameLoop();
+            }
+        }
+
+        function resetCarForNextAttempt() {
+            car.x = -60;
+            car.speed = car.maxSpeed;
+            car.isBraking = false;
+            car.skidMarks = [];
+            feedbackTimer = 0;
+            gameState = 'RUNNING';
+        }
+
+        // Trigger Brake Logic
+        function triggerBrake() {
+            if (gameState !== 'RUNNING' || car.isBraking) return;
+
+            car.isBraking = true;
+            playScreechSound();
+
+            // Camera shake feedback effect
+            container.classList.add('translate-x-1');
+            setTimeout(() => container.classList.remove('translate-x-1'), 100);
+        }
+
+        // Calculate parking error after car completely stops
+        function evaluateFinalParking() {
+            gameState = 'STOPPED';
+            attempts++;
+            updateUI();
+
+            const carFront = car.x + car.width;
+            const carRear = car.x;
+            const boxFront = stopLineX + parkBoxWidth;
+            const boxRear = stopLineX;
+
+            let errorDistance = 0;
+
+            // Check if car protrudes outside box boundaries
+            if (carFront > boxFront) {
+                errorDistance = Math.round((carFront - boxFront) * 1.5);
+            } else if (carRear < boxRear) {
+                errorDistance = Math.round((boxRear - carRear) * 1.5);
+            } else {
+                errorDistance = 0; // Completely inside box!
+            }
+
+            attemptErrors.push(errorDistance);
+
+            if (errorDistance === 0) {
+                feedbackText = "PERFECT! 0 cm";
+                feedbackColor = "#4ADE80";
+                playSuccessSound();
+            } else {
+                feedbackText = `주차완료! +${errorDistance}cm`;
+                feedbackColor = "#FACC15";
+            }
+            feedbackTimer = 90; // Frame count display duration
+
+            // Transition to next round or end game
+            setTimeout(() => {
+                if (attempts >= maxAttempts || timeLeft <= 0) {
+                    endGame();
+                } else {
+                    resetCarForNextAttempt();
+                }
+            }, 1200);
+        }
+
+        function updateUI() {
+            document.getElementById('attempt-display').innerText = `${attempts} / ${maxAttempts}`;
+        }
+
+        function endGame() {
+            gameState = 'END';
+            clearInterval(timerId);
+
+            document.getElementById('difficulty-badge').innerText = `난이도: [ ${DIFFICULTY_SETTINGS[currentDifficulty].name} ]`;
+
+            const historyContainer = document.getElementById('attempts-history');
+            historyContainer.innerHTML = '';
+            
+            let totalError = 0;
+            attemptErrors.forEach((err, idx) => {
+                totalError += err;
+                const row = document.createElement('div');
+                row.className = 'flex justify-between text-gray-300';
+                row.innerHTML = `<span>${idx + 1}회차:</span> <span class="${err === 0 ? 'text-green-400 font-bold' : ''}">${err} cm</span>`;
+                historyContainer.appendChild(row);
+            });
+
+            // Fill missing attempts if time ran out early
+            for (let i = attemptErrors.length; i < maxAttempts; i++) {
+                const row = document.createElement('div');
+                row.className = 'flex justify-between text-gray-500';
+                row.innerHTML = `<span>${i + 1}회차:</span> <span>미시도 (시간초과)</span>`;
+                historyContainer.appendChild(row);
+            }
+
+            document.getElementById('final-score').innerText = `${totalError} cm`;
+
+            const resultScreen = document.getElementById('result-screen');
+            resultScreen.classList.remove('hidden');
+            resultScreen.classList.add('flex');
+        }
+
+        function resetToMenu() {
+            gameState = 'START';
+            document.getElementById('result-screen').classList.add('hidden');
+            document.getElementById('result-screen').classList.remove('flex');
+            document.getElementById('start-screen').classList.remove('hidden');
+        }
+
+        // Draw Environment Elements
+        function drawEnvironment(scaleX, scaleY) {
+            // Road background
+            ctx.fillStyle = '#1E293B';
+            ctx.fillRect(0, 60 * scaleY, canvas.width, 100 * scaleY);
+
+            // Sidewalk / Grass
+            ctx.fillStyle = '#0F172A';
+            ctx.fillRect(0, 0, canvas.width, 60 * scaleY);
+
+            // Kerbs (Red/White pixel borders)
+            const kerbWidth = 16 * scaleX;
+            for (let i = 0; i < canvas.width; i += kerbWidth * 2) {
+                ctx.fillStyle = '#EF4444';
+                ctx.fillRect(i, 56 * scaleY, kerbWidth, 4 * scaleY);
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(i + kerbWidth, 56 * scaleY, kerbWidth, 4 * scaleY);
+            }
+
+            // Target STOP Parking Box (1.5x car length = 60px)
+            const lineX = stopLineX * scaleX;
+            const boxW = parkBoxWidth * scaleX;
+            const boxH = parkBoxHeight * scaleY;
+
+            // Yellow STOP line border
+            ctx.fillStyle = '#F59E0B';
+            ctx.fillRect(lineX - (2 * scaleX), 60 * scaleY, 4 * scaleX, 100 * scaleY);
+
+            // Dotted target box
+            ctx.strokeStyle = '#38BDF8';
+            ctx.lineWidth = 2 * scaleX;
+            ctx.setLineDash([4 * scaleX, 4 * scaleX]);
+            ctx.strokeRect(lineX, 94 * scaleY, boxW, boxH);
+            ctx.setLineDash([]);
+
+            // STOP Label in box
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = `bold ${Math.floor(10 * scaleY)}px 'DungGeunMo', monospace`;
+            ctx.textAlign = 'center';
+            ctx.fillText("STOP", lineX + (boxW / 2), 109 * scaleY);
+        }
+
+        // Draw Car Pixel Art Asset
+        function drawCar(x, y, isBraking) {
+            // Body
+            ctx.fillStyle = isBraking ? '#EF4444' : '#3B82F6';
+            ctx.fillRect(x, y, car.width * (canvas.width / V_WIDTH), car.height * (canvas.height / V_HEIGHT));
+
+            // Windows
+            ctx.fillStyle = '#93C5FD';
+            ctx.fillRect(x + (22 * (canvas.width / V_WIDTH)), y + (2 * (canvas.height / V_HEIGHT)), 12 * (canvas.width / V_WIDTH), 16 * (canvas.height / V_HEIGHT));
+
+            // Wheels
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(x + (6 * (canvas.width / V_WIDTH)), y - (2 * (canvas.height / V_HEIGHT)), 8 * (canvas.width / V_WIDTH), 3 * (canvas.height / V_HEIGHT));
+            ctx.fillRect(x + (26 * (canvas.width / V_WIDTH)), y - (2 * (canvas.height / V_HEIGHT)), 8 * (canvas.width / V_WIDTH), 3 * (canvas.height / V_HEIGHT));
+            ctx.fillRect(x + (6 * (canvas.width / V_WIDTH)), y + (car.height * (canvas.height / V_HEIGHT)), 8 * (canvas.width / V_WIDTH), 3 * (canvas.height / V_HEIGHT));
+            ctx.fillRect(x + (26 * (canvas.width / V_WIDTH)), y + (car.height * (canvas.height / V_HEIGHT)), 8 * (canvas.width / V_WIDTH), 3 * (canvas.height / V_HEIGHT));
+        }
+
+        // Main Game Loop
+        function gameLoop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const scaleX = canvas.width / V_WIDTH;
+            const scaleY = canvas.height / V_HEIGHT;
+
+            drawEnvironment(scaleX, scaleY);
+
+            if (gameState === 'RUNNING') {
+                if (!car.isBraking) {
+                    car.x += car.speed;
+                    // Auto miss if car runs off screen
+                    if (car.x > V_WIDTH + 20) {
+                        triggerBrake();
+                    }
+                } else {
+                    // Friction deceleration
+                    car.x += car.speed;
+                    car.speed *= car.friction;
+
+                    // Skid marks trace
+                    if (car.speed > 0.1) {
+                        car.skidMarks.push({ x: car.x + 4, y: car.y + 14, w: 4 });
+                    } else {
+                        // Fully stopped
+                        car.speed = 0;
+                        evaluateFinalParking();
+                    }
+                }
+            }
+
+            // Render Skid Marks
+            ctx.fillStyle = '#0F172A';
+            car.skidMarks.forEach(sm => {
+                ctx.fillRect(sm.x * scaleX, sm.y * scaleY, sm.w * scaleX, 3 * scaleY);
+            });
+
+            // Render Car
+            drawCar(car.x * scaleX, car.y * scaleY, car.isBraking);
+
+            // Popup Feedback Banner
+            if (feedbackTimer > 0) {
+                feedbackTimer--;
+                ctx.save();
+                ctx.fillStyle = feedbackColor;
+                ctx.font = `bold ${Math.floor(18 * scaleY)}px 'DungGeunMo', monospace`;
+                ctx.textAlign = 'center';
+                ctx.shadowColor = '#000000';
+                ctx.shadowBlur = 4;
+                ctx.fillText(feedbackText, canvas.width / 2, 45 * scaleY);
+                ctx.restore();
+            }
+
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // Key / Touch Event Bindings
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault();
+                if (gameState === 'RUNNING') {
+                    triggerBrake();
+                }
+            }
+        });
+
+        document.getElementById('brake-btn').addEventListener('click', (e) => {
+            e.preventDefault();
+            if (gameState === 'RUNNING') {
+                triggerBrake();
+            }
+        });
+
+        // Initialize Canvas
+        window.onload = function() {
+            resizeCanvas();
+            gameLoop();
+        };
+    </script>
+</body>
+</html>
